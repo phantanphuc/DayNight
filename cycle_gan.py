@@ -51,6 +51,8 @@ class cycleGAN(object):
         self.x_test_tfph = tf.placeholder(tf.float32, shape=[None, *self.image_size], name='x_test_tfph')
         self.y_test_tfph = tf.placeholder(tf.float32, shape=[None, *self.image_size], name='y_test_tfph')
 
+        self.test_condition_tfph = tf.placeholder(tf.float32, shape=[None, *self.image_size], name='test_condition_tfph')
+
         # self.x_test_hist_tfph = tf.placeholder(tf.float32, shape=[None, *(self.image_size[0], self.image_size[1], int(3 * self.hist_bin_size / 4))], name='x_test_hist_tfph')
         # self.y_test_hist_tfph = tf.placeholder(tf.float32, shape=[None, *(self.image_size[0], self.image_size[1], int(3 * self.hist_bin_size / 4))], name='y_test_hist_tfph')
         
@@ -111,11 +113,11 @@ class cycleGAN(object):
         self.histogram_fake_x = self.createHistogramV2(self.fake_x_imgs, self.hist_bin_size)
         self.histogram_fake_y = self.createHistogramV2(self.fake_y_imgs, self.hist_bin_size)
 
-        hist_loss_x = tf.reduce_sum(tf.math.abs(self.histogram_fake_x - self.histogram_x))
-        hist_loss_y = tf.reduce_sum(tf.math.abs(self.histogram_fake_y - self.histogram_y))
+        hist_loss_x = tf.reduce_sum(tf.math.abs(self.histogram_fake_x - self.histogram_x)) / 128
+        hist_loss_y = tf.reduce_sum(tf.math.abs(self.histogram_fake_y - self.histogram_y)) / 128
 
-        self.G_loss = self.G_gen_loss + cycle_loss + hist_loss_y / 384
-        self.F_loss = self.F_gen_loss + cycle_loss + hist_loss_x / 384
+        self.G_loss = self.G_gen_loss + cycle_loss + hist_loss_y * 2
+        self.F_loss = self.F_gen_loss + cycle_loss + hist_loss_x * 2
 
         # print(self.G_gen_loss)
         # print(self.G_loss)
@@ -135,8 +137,15 @@ class cycleGAN(object):
         print(self.histogram_fake_x)
 
         # for sampling function
+
+        self.test_y_sample_ = self.G_gen(self.x_test_tfph, self.createHistogramV2(self.test_condition_tfph, self.hist_bin_size))
+        self.test_x_sample_ = self.F_gen(self.y_test_tfph, self.createHistogramV2(self.test_condition_tfph, self.hist_bin_size))
+
+
         self.fake_y_sample = self.G_gen(self.x_test_tfph, self.y_test_hist_tfph)
         self.fake_x_sample = self.F_gen(self.y_test_tfph, self.x_test_hist_tfph)
+
+        self.condition_hist = self.createHistogramV2test(self.test_condition_tfph, self.hist_bin_size)
 
     def createHistogramV2(self, img, bin_count):
 
@@ -149,8 +158,8 @@ class cycleGAN(object):
 
         bin_count = int(bin_count / 1)
         for idx, i in enumerate(np.arange(0.0, 1.0, bin_size)):
-            gt_hsv = tf.greater(img, i)
-            leq_hsv = tf.less_equal(img, i + bin_size)
+            gt_hsv = tf.greater(hsv_img, i)
+            leq_hsv = tf.less_equal(hsv_img, i + bin_size)
 
             node_hsv = tf.reduce_sum(tf.cast(tf.logical_and(gt_hsv, leq_hsv), tf.float32), axis=(1, 2))
             hist_entries_hsv.append(node_hsv)
@@ -174,6 +183,44 @@ class cycleGAN(object):
         # hist = tf.reshape(hist, shape=(-1, self.image_size[0], self.image_size[1], 3 * bin_count))
 
         return hist / (self.image_size[0] * self.image_size[1])
+
+
+    def createHistogramV2test(self, img, bin_count):
+
+        hsv_img = tf.image.rgb_to_hsv((img + 1.0) / 2.0)
+        yuv_img = tf.image.rgb_to_yuv((img + 1.0) / 2.0)
+
+        bin_size = 1 / bin_count
+        hist_entries_hsv = []
+        # hist_entries_yuv = []
+
+        bin_count = int(bin_count / 1)
+        for idx, i in enumerate(np.arange(0.0, 1.0, bin_size)):
+            gt_hsv = tf.greater(hsv_img, i)
+            leq_hsv = tf.less_equal(hsv_img, i + bin_size)
+
+            node_hsv = tf.reduce_sum(tf.cast(tf.logical_and(gt_hsv, leq_hsv), tf.float32), axis=(1, 2))
+            hist_entries_hsv.append(node_hsv)
+
+            #------------
+            # gt = tf.greater(img, i)
+            # leq = tf.less_equal(img, i + bin_size)
+
+            # node = tf.reduce_sum(tf.cast(tf.logical_and(gt, leq), tf.float32), axis=(1, 2))
+            # hist_entries.append(node)
+
+        hist = tf.stack(hist_entries_hsv)
+        hist = tf.transpose(hist, perm=[1, 2, 0])
+        
+        hist = tf.slice(hist, [0, 2, 0], [-1, 1, bin_count])
+
+        hist = tf.reshape(hist, shape=(-1, bin_count))
+
+
+
+        return hist / (self.image_size[0] * self.image_size[1])
+
+
 
     def createHistogram(self, img, bin_count):
         bin_size = 2/bin_count
@@ -287,6 +334,24 @@ class cycleGAN(object):
             return [img, fake_y]
         elif mode == 'YtoX':
             fake_x = self.sess.run(self.fake_x_sample, feed_dict={self.y_test_tfph: img})
+            return [img, fake_x]
+        else:
+            raise NotImplementedError
+
+    def test_step_v2(self, img, condition, mode='XtoY'):
+        if mode == 'XtoY':
+
+            fake_y = self.sess.run(self.test_y_sample_, feed_dict={self.x_test_tfph: img, self.test_condition_tfph: condition})
+
+            return [img, fake_y]
+        elif mode == 'YtoX':
+            condition_hist_hehe = self.sess.run(self.condition_hist, feed_dict={self.test_condition_tfph: condition})
+
+            print(condition_hist_hehe)
+            print(list(condition_hist_hehe))
+            quit()
+
+            fake_x = self.sess.run(self.test_x_sample_, feed_dict={self.y_test_tfph: img, self.test_condition_tfph: condition})
             return [img, fake_x]
         else:
             raise NotImplementedError
