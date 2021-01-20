@@ -116,8 +116,8 @@ class cycleGAN(object):
         hist_loss_x = tf.reduce_sum(tf.math.abs(self.histogram_fake_x - self.histogram_x)) / 128
         hist_loss_y = tf.reduce_sum(tf.math.abs(self.histogram_fake_y - self.histogram_y)) / 128
 
-        self.G_loss = self.G_gen_loss + cycle_loss + hist_loss_y * 2
-        self.F_loss = self.F_gen_loss + cycle_loss + hist_loss_x * 2
+        self.G_loss = self.G_gen_loss + cycle_loss + hist_loss_y * 0.5
+        self.F_loss = self.F_gen_loss + cycle_loss + hist_loss_x * 0.5
 
         # print(self.G_gen_loss)
         # print(self.G_loss)
